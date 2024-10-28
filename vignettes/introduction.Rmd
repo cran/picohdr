@@ -1,0 +1,139 @@
+---
+title: "Introduction"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(picohdr)
+```
+
+
+
+## Read and display a `PFM` image
+
+`PFM` (*Portable Float Map*) is a simple format for storing Gray or RGB colour data.  Pixels
+are stored as 32-bit floating point values in a simple array format.
+
+Load and display a  (`PFM`) image.
+
+Apply tone-mapping to the image and adjust the gamma correction prior to display.
+
+```{r pfm1}
+filename <- system.file("image/rstats.pfm.bz2", package = "picohdr") 
+im <- read_pfm(filename)
+dim(im)
+
+im |> 
+  tm_reinhard() |>
+  adj_gamma() |> 
+  plot()
+```
+
+
+
+## Read and display an `EXR` image
+
+`OpenEXR` images are a more complex HDR image container.  Pixel types may
+be 16-bit floats, 32-bit floats or 32-bit unsigned integers.
+
+Images can contain any number of channels with arbitrary names - this includes
+data that isn't related to the colour of the display e.g. image depth, texture
+coordinates.
+
+The actual image data may be stored as scanlines, tiles or deep images in 
+single- or multi-part formats.
+
+Currently, this package only supports reading **single-part scanline** images
+which are using `NONE`, `ZIP` or `ZIPS` compression.
+
+The steps included below:
+
+* Load an EXR image as an array
+* Show the names of the channels in this array
+* Select the RGB channels from the array and plot them (after applying 
+  tone-mapping and gamma correction)
+* Plot some other channels in the image
+* Display the metainformation about an EXR image using `exr_info()`
+
+```{r exr1}
+library(picohdr)
+
+# EXR file of meta-information about the rendered scene
+filename <- system.file("image/rstats.exr", package = "picohdr") 
+
+# Load all images
+images <- read_exr(filename)
+dim(im)
+
+# Channel names. EXR format wants channels arranged alphabetically
+dimnames(images)[[3]]
+
+# Extract RGB channels. Tone-map. Adjust gamma.
+images[,,c('R', 'G', 'B')] |>
+  tm_reinhard() |>
+  adj_gamma() |>
+  plot()
+
+# Plot the albedo Green channel
+plot(images[, , 'Albedo.G'])
+```
+
+### Display a non-colour channel
+
+This EXR file includes information about the surface derivative at each point in 
+the image in the `dzdx` channel.
+
+This value may be negative or positive, so we will map the values into the
+standard range [0, 1] so it can be visualised.
+
+```{r exr2}
+# Rescale the derivative channel to the range [0,1] and display
+images[,,'dzdx'] |>
+  adj_rescale(0, 1) |> 
+  plot()
+```
+
+### EXR metadata
+
+Meta-information about the contents of an EXR file can be extracted for 
+all EXR image types.
+
+```{r}
+exr_info(filename)
+```
+
+
+
+## EXR Implementation Notes
+
+The code for handling EXR images is mostly written in base R with the exception 
+of a core compression/decompression component which is written in C:
+
+The ZIP compression mode applies a predictor and de-interleaves bytes. The byte 
+predictor and interleaving can be in R but is 20x faster in C. 
+
+EXR support is for a subset of images which:
+
+* consist of a single-part scanline image.
+* use the `NONE`, `ZIP` or `ZIPS` compression
+
+This package **does not** support the following EXR features: 
+
+* multi-part images
+* deep images
+* tiled images
+
+If you would like support for these features please file an issue on GitHub.
+A link to a free/openly-licensed image containing your requested features would be 
+appreciated.

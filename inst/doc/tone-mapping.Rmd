@@ -1,0 +1,264 @@
+---
+title: "Tone Mapping"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Tone Mapping}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 4
+)
+
+```
+
+```{r setup}
+library(picohdr)
+```
+
+
+# HDR images
+
+High Dynamic Range (HDR) images contain information about the luminosity in 
+a scene that can be well outside the range of standard file formats like PNG
+or JPEG.
+
+In non-HDR images (Low Dynamic Range (LDR) images), the value for any particular
+pixel usually lie in the range [0, 1] or [0, 255].  In HDR images, there is
+no real limit to the upper value.
+
+Other considerations for HDR image
+
+* There may be more than 4 channels of data.  EXR images are often used to stored
+  extra information such as rendering depth, UV texture coordinates, coordinates etc
+* It will often be necessary to extract the channels of interest for plotting.
+  In the EXR image format, channels are stored *alphabetically*, which means
+  that careful selection will be needed to extract RGBA channels in order.
+
+Tone mapping is the process of manipulating the HDR values into a lower dynamic
+range - usually with values in the range [0, 1].  
+
+There is no "correct" tone mapping operation - just different techniques depending
+on your requirements.
+
+
+## Example image
+
+When an EXR image is loaded it is just a numeric array of data.
+
+```{r}
+file <- system.file("image/rstats.exr", package = "picohdr")
+im <- picohdr::read_exr(file)
+dim(im)
+```
+
+The names on the array indicate the channel names.  EXR stored all channels
+in alphabetical order.
+
+Here there are RGBA channels
+but also extra information from the 3D renderer which created this image 
+e.g. the `u` and `v` texture coordinates at each output pixel.
+
+```{r}
+dimnames(im)[[3]]
+```
+
+A peek at the first plane in the array shows that it is just numeric data
+
+```{r}
+im[1:5, 1:5, 1]
+```
+
+We can create a standard RGB array from this image data
+
+```{r}
+rgb_arr <- im[, , c('R', 'G', 'B')]
+```
+
+If this was a normal image loaded from PNG or JPEG, we could do the following
+to view it in R - but this code will cause an error with an HDR image as 
+there is no guarantee that the pixel values lie between 0 and 1 (which is
+what `as.raster()` requires)
+
+```{r error=TRUE}
+plot(as.raster(rgb_arr))
+```
+
+
+```{r}
+library(ggplot2)
+df <- array_to_df(rgb_arr)
+
+ggplot(df) + 
+  geom_density(aes(value, group = channel, colour = channel)) + 
+  theme_bw() + 
+  theme(legend.position = 'bottom') + 
+  coord_cartesian(xlim = c(0, 1.5), ylim = c(0, 5)) +
+  scale_color_manual(values = c('blue', 'green', 'red')) +
+  labs(
+    title = "Raw HDR pixel values",
+    subtitle = "Some values greater than 1.0 in this image"
+  )
+```
+
+**Tone mapping** is then the process by which these pixel values can be 
+shifted, truncated, adapted to squeeze the pixel values into the range [0, 1]
+so that we can view it properly in our *low dynamic range* R session.
+
+## Tone-map by clamping
+
+A simple technique for tone-mapping is to just clamp the values at [0, 1] with 
+values outside this range being pulled back to these limits.
+
+If we do this, then the image is now viewable as a raster, but some parts of
+it look blown out and overexposed.
+
+```{r}
+rgb_clamped <- rgb_arr |>
+  adj_clamp(lo = 0, hi = 1) |>
+  adj_gamma()
+
+oldpar <- par(mai = c(0, 0, 0, 0))
+plot(as.raster(rgb_clamped))
+par(oldpar)
+```
+
+```{r echo=FALSE}
+df <- array_to_df(rgb_clamped)
+
+ggplot(df) + 
+  geom_density(aes(value, group = channel, colour = channel)) + 
+  theme_bw() + 
+  theme(legend.position = 'bottom') + 
+  coord_cartesian(xlim = c(0, 1.5), ylim = c(0, 5)) +
+  scale_color_manual(values = c('blue', 'green', 'red')) +
+  labs(
+    title = "Pixel values clamped to [0, 1]"
+  )
+```
+
+
+## Tone-map by linear rescaling
+
+
+```{r}
+rgb_rescale <- rgb_arr |>
+  adj_rescale(lo = 0, hi = 1) |>
+  adj_gamma()
+
+oldpar <- par(mai = c(0, 0, 0, 0))
+plot(as.raster(rgb_rescale))
+par(oldpar)
+```
+
+```{r echo=FALSE}
+df <- array_to_df(rgb_rescale)
+
+ggplot(df) + 
+  geom_density(aes(value, group = channel, colour = channel)) + 
+  theme_bw() + 
+  theme(legend.position = 'bottom') + 
+  coord_cartesian(xlim = c(0, 1.5), ylim = c(0, 5)) +
+  scale_color_manual(values = c('blue', 'green', 'red')) +
+  labs(
+    title = "Pixel values rescaled to [0, 1]"
+  )
+```
+
+
+## Tone-map with Reinhard's technique
+
+At its core, Reinhard's technique is a non-linear rescaling of the values
+back into the range [0, 1].
+
+```{r}
+rgb_rh1<- rgb_arr |>
+  tm_reinhard() |>
+  adj_gamma() 
+
+oldpar <- par(mai = c(0, 0, 0, 0))
+plot(as.raster(rgb_rh1))
+par(oldpar)
+```
+
+```{r echo=FALSE}
+df <- array_to_df(rgb_rh1)
+
+ggplot(df) + 
+  geom_density(aes(value, group = channel, colour = channel)) + 
+  theme_bw() + 
+  theme(legend.position = 'bottom') + 
+  coord_cartesian(xlim = c(0, 1.5), ylim = c(0, 5)) +
+  scale_color_manual(values = c('blue', 'green', 'red')) +
+  labs(
+    title = "Tone mapping: Reinhard"
+  )
+```
+
+
+
+## Tone-map with Reinhard's technique (extended)
+
+This basic version of Reinhard's technique does uses a simpler version of the
+algorithm.  Results may be a bit darker and/or washed out.
+
+```{r}
+rgb_rh2 <- rgb_arr |>
+  tm_reinhard_basic() |>
+  adj_gamma() 
+
+oldpar <- par(mai = c(0, 0, 0, 0))
+plot(as.raster(rgb_rh2))
+par(oldpar)
+```
+
+```{r echo=FALSE}
+df <- array_to_df(rgb_rh2)
+
+ggplot(df) + 
+  geom_density(aes(value, group = channel, colour = channel)) + 
+  theme_bw() + 
+  theme(legend.position = 'bottom') + 
+  coord_cartesian(xlim = c(0, 1.5), ylim = c(0, 5)) +
+  scale_color_manual(values = c('blue', 'green', 'red')) +
+  labs(
+    title = "Tone mapping: Reinhard (extended)"
+  )
+```
+
+
+## Tone-map with Reinhard's technique (variant)
+
+This variant on Reinhard's technique is a hybrid between
+the standard and basic techniques.
+
+```{r}
+rgb_rh3 <- rgb_arr |>
+  tm_reinhard_variant() |>
+  adj_gamma() 
+
+oldpar <- par(mai = c(0, 0, 0, 0))
+plot(as.raster(rgb_rh3))
+par(oldpar)
+```
+
+```{r echo=FALSE}
+df <- array_to_df(rgb_rh3)
+
+ggplot(df) + 
+  geom_density(aes(value, group = channel, colour = channel)) + 
+  theme_bw() + 
+  theme(legend.position = 'bottom') + 
+  coord_cartesian(xlim = c(0, 2), ylim = c(0, 5)) +
+  scale_color_manual(values = c('blue', 'green', 'red')) +
+  labs(
+    title = "Tone mapping: Reinhard (variant)"
+  )
+```
+
+
+
